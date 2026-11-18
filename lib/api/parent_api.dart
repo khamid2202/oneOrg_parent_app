@@ -1,0 +1,66 @@
+import 'api_client.dart';
+
+/// Every call the app makes. `personId` is the child (persons.id). See
+/// oneorg-backend/docs/parent/*.md for the shapes.
+class ParentApi {
+  ParentApi(this.client);
+  final ApiClient client;
+
+  /// SMS login, step 1. The answer is the same whether or not the number is
+  /// a guardian's, so it never says if one is registered.
+  Future<Map<String, dynamic>> requestSmsCode(String phone) =>
+      client.post('/parent/auth/sms/request', body: {'phone': phone});
+  /// SMS login, step 2: the number plus the 5-digit code.
+  Future<Map<String, dynamic>> loginWithSms(String phone, String code) =>
+      client.post('/parent/auth/login/sms', body: {'phone': phone, 'code': code});
+  Future<void> logout() => client.post('/parent/auth/revoke');
+
+  Future<Map<String, dynamic>> children() => client.get('/parent/persons/accessible');
+
+  Future<Map<String, dynamic>> schedule(int personId, String date) =>
+      client.get('/parent/schedule', {'person_id': personId, 'date': date});
+  Future<Map<String, dynamic>> todayLessons(int personId) =>
+      client.get('/parent/schedule/today-lessons', {'person_id': personId});
+
+  Future<Map<String, dynamic>> attendance(int personId, Map<String, Object?> params) =>
+      client.get('/parent/attendance', {'person_id': personId, ...params});
+  Future<Map<String, dynamic>> grades(int personId, Map<String, Object?> params) =>
+      client.get('/parent/grades', {'person_id': personId, ...params});
+
+  Future<Map<String, dynamic>> points(int personId, Map<String, Object?> params) =>
+      client.get('/parent/points', {'person_id': personId, ...params});
+  Future<Map<String, dynamic>> pointsProgress(int personId) =>
+      client.get('/parent/points/progress', {'person_id': personId});
+  Future<Map<String, dynamic>> ranking(int personId, String from, String to) =>
+      client.get('/parent/ranking',
+          {'person_id': personId, 'start_date': from, 'end_date': to});
+
+  Future<Map<String, dynamic>> exams(int personId) =>
+      client.get('/parent/exams', {'person_id': personId});
+  Future<Map<String, dynamic>> examRanking(int personId, int examId) =>
+      client.get('/parent/exams/ranking', {'person_id': personId, 'exam_id': examId});
+
+  Future<Map<String, dynamic>> calendar(int personId, String from, String to) =>
+      client.get('/parent/calendar', {'person_id': personId, 'from': from, 'to': to});
+
+  Future<Map<String, dynamic>> notifications(int personId) =>
+      client.get('/parent/notifications', {'person_id': personId, 'page': 1, 'limit': 30});
+  Future<Map<String, dynamic>> unreadCount(int personId) =>
+      client.get('/parent/notifications/unread-count', {'person_id': personId});
+  Future<void> markRead(int personId, int id) =>
+      client.patch('/parent/notifications/$id/read', query: {'person_id': personId});
+  Future<void> markAllRead(int personId) => client
+      .post('/parent/notifications/read-all', query: {'person_id': personId});
+
+  /// Pushes for [personId] go to this device. `person_id` goes in the query:
+  /// the body DTO only allows `token` and `platform`.
+  Future<void> registerDeviceToken(int personId, String token, String platform) => client.post(
+        '/parent/notifications/device-token',
+        body: {'token': token, 'platform': platform},
+        query: {'person_id': personId},
+      );
+
+  /// Stops pushes to this device for every child of the account.
+  Future<void> unregisterDeviceToken(String token) =>
+      client.delete('/parent/notifications/device-token', body: {'token': token});
+}
