@@ -8,6 +8,7 @@ import '../api/api_client.dart';
 import '../api/parent_api.dart';
 import '../l10n/l10n.dart';
 import '../state/auth.dart';
+import '../state/passkeys.dart';
 import '../state/settings.dart';
 import '../widgets/dombit_logo.dart';
 import '../widgets/theme.dart';
@@ -213,6 +214,26 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  Future<void> _passkey() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _errorKey = null;
+    });
+    try {
+      await context.read<Auth>().loginWithPasskey();
+    } on PasskeyCancelled {
+      if (mounted) setState(() => _busy = false);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorKey = passkeyErrorKey(e);
+          _busy = false;
+        });
+      }
+    }
+  }
+
   Future<void> _login() async {
     final code = _code.text.trim();
     if (_busy || code.length != 5) return;
@@ -250,12 +271,38 @@ class _LoginScreenState extends State<LoginScreen> {
             inputFormatters: [UzPhoneFormatter()],
             style: const TextStyle(fontSize: 17, letterSpacing: 0.5),
             onSubmitted: (_) => _send(),
-            decoration: const InputDecoration(prefixText: '+998  ', hintText: '90 123 45 67'),
+            // prefixIcon, not prefixText: the code stays visible before the field is tapped.
+            decoration: InputDecoration(
+              hintText: '90 123 45 67',
+              prefixIcon: Padding(
+                padding: const EdgeInsets.only(left: 16, right: 8),
+                child: Text('+998', style: TextStyle(fontSize: 17, color: c.ink)),
+              ),
+              prefixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
+            ),
           ),
           if (!_codeSent) ...[
             FormError(_errorKey == null ? null : context.t(_errorKey!)),
             const SizedBox(height: 16),
             BusyButton(label: context.t('auth.sendCode'), busy: _busy, onPressed: _send),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(child: Divider(color: c.line)),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Text(context.t('passkey.or'), style: TextStyle(color: c.muted, fontSize: 13)),
+                ),
+                Expanded(child: Divider(color: c.line)),
+              ],
+            ),
+            const SizedBox(height: 20),
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+              onPressed: _busy ? null : _passkey,
+              icon: const Icon(Icons.key_outlined, size: 20),
+              label: Text(context.t('passkey.signIn')),
+            ),
           ] else ...[
             const SizedBox(height: 10),
             Text(
@@ -308,6 +355,64 @@ class _LoginScreenState extends State<LoginScreen> {
               ],
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Shown once after an SMS login: add a passkey so the next login is Face ID
+/// or a fingerprint instead of waiting for an SMS.
+class PasskeyOfferScreen extends StatefulWidget {
+  const PasskeyOfferScreen({super.key});
+  @override
+  State<PasskeyOfferScreen> createState() => _PasskeyOfferScreenState();
+}
+
+class _PasskeyOfferScreenState extends State<PasskeyOfferScreen> {
+  bool _busy = false;
+  String? _errorKey;
+
+  Future<void> _add() async {
+    final auth = context.read<Auth>();
+    setState(() {
+      _busy = true;
+      _errorKey = null;
+    });
+    try {
+      await auth.passkeys.add();
+      await auth.closePasskeyOffer();
+    } on PasskeyCancelled {
+      if (mounted) setState(() => _busy = false);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorKey = passkeyErrorKey(e);
+          _busy = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final auth = context.read<Auth>();
+    return AuthShell(
+      title: context.t('passkey.offerTitle'),
+      subtitle: context.t('passkey.offerBody'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Icon(Icons.fingerprint, size: 72, color: context.c.accent),
+          const SizedBox(height: 24),
+          FormError(_errorKey == null ? null : context.t(_errorKey!)),
+          const SizedBox(height: 8),
+          BusyButton(label: context.t('passkey.add'), busy: _busy, onPressed: _add),
+          const SizedBox(height: 12),
+          TextButton(
+            onPressed: _busy ? null : auth.closePasskeyOffer,
+            child: Text(context.t('passkey.notNow')),
+          ),
         ],
       ),
     );

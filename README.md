@@ -9,9 +9,9 @@ en) as the web app in `SchoolProject/oneorg-parents`.
 
 ```bash
 flutter pub get
-flutter run                              # against https://dev-api.oneorg.uz
+flutter run                              # against https://api.oneorg.uz (prod)
 flutter run --dart-define=MOCK=true      # built-in sample data, any login works
-flutter run --dart-define=API_BASE_URL=https://api.oneorg.uz
+flutter run --dart-define=API_BASE_URL=https://dev-api.oneorg.uz
 ```
 
 ## Logging in
@@ -24,6 +24,32 @@ Phone number + SMS code only; no passwords and no DIS code.
    through Eskiz; see `/parent/auth/sms/request` and `/parent/auth/login/sms`.
 3. The code logs in to every child linked to that phone. The token lasts 30
    days; after that, or after logging out, the parent gets a new code.
+
+### Passkeys
+
+After an SMS login the app offers to add a passkey (once per device; also under
+Settings → Passkeys). Next time the parent taps "Log in with a passkey" and uses
+Face ID, a fingerprint or the phone's passcode instead of an SMS. Backend:
+`/parent/auth/passkey/options`, `/parent/auth/login/passkey` and
+`/parent/auth/passkeys` (see oneorg-backend `docs/parent/auth.md`).
+
+It works on a phone only when all of these are in place (the domain below is
+`oneorg.uz`; change it everywhere if the server uses another):
+
+1. **Server env:** `PARENT_WEBAUTHN_RP_ID=oneorg.uz` and
+   `PARENT_WEBAUTHN_ORIGINS` listing `https://oneorg.uz` plus the Android app
+   origins (the base64url SHA-256 of each signing certificate):
+   - `android:apk-key-hash:tIZGkTXY9CZoTbDCqSk5E8kjK9dN4XHRJATsoVMuii4` (release key)
+   - `android:apk-key-hash:ANfMBVxRLMh2oaSmyNgG4Rg8NGz0ECwvdsL5c0hZR5I` (debug key)
+   - with Google Play App Signing, also the hash of Play's app signing key.
+2. **Website:** serve `docs/well-known/apple-app-site-association` and
+   `docs/well-known/assetlinks.json` at `https://oneorg.uz/.well-known/` as
+   `application/json`, with no redirect (today the web app answers those paths
+   with its HTML page).
+3. **iOS:** in Xcode add the *Associated Domains* capability with
+   `webcredentials:oneorg.uz` (already in `ios/Runner/Runner.entitlements`).
+   Passkeys need iOS 16 or newer.
+
 
 ## Layout
 
@@ -56,8 +82,8 @@ flutter build appbundle --release
 - Use Play App Signing (the default for new apps): this keystore is the upload
   key; Google holds the app signing key.
 
-The default API is the dev server. For the store build, pass the production
-URL: `flutter build appbundle --release --dart-define=API_BASE_URL=https://…`.
+The default API is production (`https://api.oneorg.uz`), so a plain
+`flutter build appbundle --release` is the store build.
 
 ## Backend notes
 

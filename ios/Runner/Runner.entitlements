@@ -2,11 +2,21 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- APNs environment for push notifications. Not referenced by the Xcode
-	     project yet: add it via Runner target > Signing & Capabilities >
-	     + Capability > Push Notifications, which also updates the
+	<!-- Not referenced by the Xcode project yet: in Xcode, Runner target >
+	     Signing & Capabilities > + Capability, add "Push Notifications" and
+	     "Associated Domains" (this file's values), which also updates the
 	     provisioning profile. -->
+
+	<!-- APNs environment for push notifications. -->
 	<key>aps-environment</key>
 	<string>development</string>
+
+	<!-- Passkeys: the domain must match the server's PARENT_WEBAUTHN_RP_ID and
+	     serve /.well-known/apple-app-site-association listing
+	     9LCJJJGA65.uz.oneorg.parents under "webcredentials". -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>webcredentials:oneorg.uz</string>
+	</array>
 </dict>
 </plist>

@@ -85,6 +85,7 @@ class _RootState extends State<_Root> {
     }
     _wasLoggedIn = auth.loggedIn;
     if (!auth.loggedIn) return const LoginScreen();
+    if (auth.offerPasskey) return const PasskeyOfferScreen();
     return const Shell();
   }
 }

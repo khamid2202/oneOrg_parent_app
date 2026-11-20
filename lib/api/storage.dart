@@ -12,6 +12,8 @@ class Storage {
 
   static const _tokenKey = 'parents_token';
   static const child = 'child';
+  static const offerPasskey = 'offer_passkey';
+  static const passkeyOfferDone = 'passkey_offer_done';
   static const language = 'language';
   static const theme = 'theme';
 

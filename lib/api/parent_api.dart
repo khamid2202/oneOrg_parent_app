@@ -15,6 +15,23 @@ class ParentApi {
       client.post('/parent/auth/login/sms', body: {'phone': phone, 'code': code});
   Future<void> logout() => client.post('/parent/auth/revoke');
 
+  /// Passkey login, step 1: WebAuthn request options and a challenge id.
+  Future<Map<String, dynamic>> passkeyLoginOptions() =>
+      client.post('/parent/auth/passkey/options', body: <String, dynamic>{});
+  /// Passkey login, step 2: the signed assertion.
+  Future<Map<String, dynamic>> loginWithPasskey(String challengeId, Map<String, dynamic> response) =>
+      client.post('/parent/auth/login/passkey', body: {'challenge_id': challengeId, 'response': response});
+
+  /// The logged-in account's passkeys.
+  Future<Map<String, dynamic>> passkeys() => client.get('/parent/auth/passkeys');
+  /// Adding a passkey, step 1: WebAuthn creation options.
+  Future<Map<String, dynamic>> passkeyRegistrationOptions() =>
+      client.post('/parent/auth/passkeys/options');
+  /// Adding a passkey, step 2. Without a name the server names it after the device.
+  Future<Map<String, dynamic>> addPasskey(Map<String, dynamic> response) =>
+      client.post('/parent/auth/passkeys', body: {'response': response});
+  Future<void> deletePasskey(int id) => client.delete('/parent/auth/passkeys/$id');
+
   Future<Map<String, dynamic>> children() => client.get('/parent/persons/accessible');
 
   Future<Map<String, dynamic>> schedule(int personId, String date) =>

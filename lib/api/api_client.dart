@@ -4,11 +4,11 @@ import 'package:flutter/foundation.dart';
 import 'mock.dart';
 import 'storage.dart';
 
-/// The OneOrg API. Override with
-/// `--dart-define=API_BASE_URL=https://api.example.uz`.
+/// The OneOrg production API. Point at dev with
+/// `--dart-define=API_BASE_URL=https://dev-api.oneorg.uz`.
 const kApiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
-  defaultValue: 'https://dev-api.oneorg.uz',
+  defaultValue: 'https://api.oneorg.uz',
 );
 
 /// `--dart-define=MOCK=true` runs on built-in sample data (any login works).

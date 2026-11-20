@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../api/api_client.dart';
 import '../api/parent_api.dart';
 import '../l10n/l10n.dart';
 import '../state/auth.dart';
 import '../state/children.dart';
+import '../state/passkeys.dart';
 import '../state/query_cache.dart';
 import '../state/settings.dart';
 import '../util/dates.dart';
@@ -1119,6 +1121,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 24),
           OutlinedButton.icon(
+            onPressed: () => _push(context, const PasskeysScreen()),
+            icon: const Icon(Icons.key_outlined, size: 18),
+            label: Text(context.t('passkey.title')),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
             style: OutlinedButton.styleFrom(foregroundColor: dark ? const Color(0xFFFB7185) : const Color(0xFFE11D48)),
             onPressed: _logout,
             icon: const Icon(Icons.logout, size: 18),
@@ -1181,6 +1189,148 @@ class _Choice<T> extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------- Passkeys
+
+/// The account's passkeys: add one on this phone, or delete old ones.
+class PasskeysScreen extends StatefulWidget {
+  const PasskeysScreen({super.key});
+  @override
+  State<PasskeysScreen> createState() => _PasskeysScreenState();
+}
+
+class _PasskeysScreenState extends State<PasskeysScreen> {
+  static const _key = 'passkeys';
+  bool _busy = false;
+  String? _messageKey;
+  bool _messageIsError = false;
+
+  void _say(String key, {bool error = false}) => setState(() {
+        _messageKey = key;
+        _messageIsError = error;
+      });
+
+  Future<void> _add(Future<void> Function() reload) async {
+    final auth = context.read<Auth>();
+    setState(() {
+      _busy = true;
+      _messageKey = null;
+    });
+    try {
+      await auth.passkeys.add();
+      // Added here, so there's nothing left to offer after the next SMS login.
+      await auth.closePasskeyOffer();
+      await reload();
+      if (mounted) _say('passkey.added');
+    } on PasskeyCancelled {
+      // Closed the system sheet: nothing to say.
+    } catch (e) {
+      if (mounted) _say(passkeyErrorKey(e), error: true);
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+
+  Future<void> _delete(Json key, Future<void> Function() reload) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (d) => AlertDialog(
+        content: Text(d.t('passkey.deleteConfirm')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(d, false), child: Text(d.t('common.cancel'))),
+          TextButton(onPressed: () => Navigator.pop(d, true), child: Text(d.t('passkey.delete'))),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _messageKey = null);
+    try {
+      await context.read<ParentApi>().deletePasskey((key['id'] as num).toInt());
+    } catch (e) {
+      if (mounted) _say(errorKey(e), error: true);
+    }
+    await reload();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final api = context.read<ParentApi>();
+    final f = Fmt(context.lang);
+    final c = context.c;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+
+    return Query<Json>(
+      cacheKey: _key,
+      load: api.passkeys,
+      builder: (context, q) {
+        final keys = _list(q.data?['result']);
+        Widget list;
+        if (q.loading) {
+          list = const LoadingState();
+        } else if (q.data == null) {
+          list = ErrorState(error: q.error, onRetry: q.reload);
+        } else if (keys.isEmpty) {
+          list = EmptyState(text: context.t('passkey.empty'), icon: Icons.key_off_outlined);
+        } else {
+          list = PanelList(
+            children: [
+              for (final k in keys)
+                ListTile(
+                  leading: Icon(k['synced'] == true ? Icons.cloud_done_outlined : Icons.key_outlined, color: c.accent),
+                  title: Text('${k['name'] ?? ''}'),
+                  subtitle: Text(
+                    k['last_used_at'] == null
+                        ? context.t('passkey.neverUsed')
+                        : context.t('passkey.lastUsed', {'when': f.moment(k['last_used_at'] as Object)}),
+                    style: TextStyle(fontSize: 12, color: c.muted),
+                  ),
+                  trailing: IconButton(
+                    tooltip: context.t('passkey.delete'),
+                    icon: const Icon(Icons.delete_outline),
+                    onPressed: () => _delete(k, q.reload),
+                  ),
+                ),
+            ],
+          );
+        }
+        return _Page(
+          title: context.t('passkey.title'),
+          child: RefreshIndicator(
+            onRefresh: q.reload,
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+              children: [
+                Text(context.t('passkey.offerBody'), style: TextStyle(color: c.muted)),
+                const SizedBox(height: 16),
+                list,
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: _busy ? null : () => _add(q.reload),
+                  icon: _busy
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.add),
+                  label: Text(context.t('passkey.add')),
+                ),
+                if (_messageKey != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: Text(
+                      context.t(_messageKey!),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: _messageIsError
+                            ? (dark ? const Color(0xFFFB7185) : const Color(0xFFE11D48))
+                            : (dark ? const Color(0xFF34D399) : const Color(0xFF059669)),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
