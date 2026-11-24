@@ -141,7 +141,7 @@ class _ShellState extends State<Shell> {
           const ScheduleScreen(),
           const GradesScreen(),
           const AttendanceScreen(),
-          const MoreScreen(),
+          const SettingsScreen(inTab: true),
         ],
       );
     }
@@ -151,7 +151,7 @@ class _ShellState extends State<Shell> {
       (Icons.calendar_month_outlined, Icons.calendar_month, 'nav.schedule'),
       (Icons.star_outline, Icons.star, 'nav.grades'),
       (Icons.event_available_outlined, Icons.event_available, 'nav.attendance'),
-      (Icons.grid_view_outlined, Icons.grid_view, 'nav.more'),
+      (Icons.settings_outlined, Icons.settings, 'nav.settings'),
     ];
 
     return PopScope(
@@ -219,12 +219,7 @@ class ChildSwitcher extends StatelessWidget {
     if (child == null) return const SizedBox.shrink();
     final list = children.list;
 
-    void next() {
-      final i = list.indexWhere((c) => c.id == child.id);
-      children.select(list[(i + 1) % list.length].id);
-    }
-
-    return Row(
+    final current = Row(
       children: [
         Expanded(
           // A ticker: the next child rolls up from below, the old one leaves upward.
@@ -285,14 +280,52 @@ class ChildSwitcher extends StatelessWidget {
             ),
           ),
         ),
-        if (list.length > 1)
-          IconButton(
-            tooltip: context.t('children.switch'),
-            onPressed: next,
-            color: context.c.accent,
-            icon: const Icon(Icons.sync),
+        if (list.length > 1) ...[
+          const SizedBox(width: 4),
+          Icon(Icons.keyboard_arrow_down, color: context.c.accent),
+        ],
+      ],
+    );
+    if (list.length < 2) return current;
+
+    // Tapping the child opens a list of all children to pick from.
+    return PopupMenuButton<int>(
+      tooltip: context.t('children.switch'),
+      position: PopupMenuPosition.under,
+      offset: const Offset(0, 8),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      onSelected: children.select,
+      itemBuilder: (_) => [
+        for (final c in list)
+          PopupMenuItem<int>(
+            value: c.id,
+            child: Row(
+              children: [
+                Avatar(name: c.fullName, url: c.picture, size: 32),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(c.fullName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                      if (c.className.isNotEmpty)
+                        Text(c.className, style: TextStyle(fontSize: 12, color: context.c.muted)),
+                    ],
+                  ),
+                ),
+                if (c.id == child.id) ...[
+                  const SizedBox(width: 8),
+                  Icon(Icons.check, size: 20, color: context.c.accent),
+                ],
+              ],
+            ),
           ),
       ],
+      child: current,
     );
   }
 }

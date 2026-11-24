@@ -16,6 +16,7 @@ class Storage {
   static const passkeyOfferDone = 'passkey_offer_done';
   static const language = 'language';
   static const theme = 'theme';
+  static const pushMuted = 'push_muted';
 
   static Future<Storage> open() async {
     final storage = Storage._(await SharedPreferences.getInstance());

@@ -7,6 +7,7 @@ import '../l10n/l10n.dart';
 import '../state/auth.dart';
 import '../state/children.dart';
 import '../state/passkeys.dart';
+import '../state/push.dart';
 import '../state/query_cache.dart';
 import '../state/settings.dart';
 import '../util/dates.dart';
@@ -44,48 +45,6 @@ class _Page extends StatelessWidget {
     ),
     body: child,
   );
-}
-
-// ---------------------------------------------------------------- More
-
-class MoreScreen extends StatelessWidget {
-  const MoreScreen({super.key});
-  @override
-  Widget build(BuildContext context) {
-    final items = [
-      (Icons.emoji_events_outlined, 'points', () => const PointsScreen()),
-      (Icons.school_outlined, 'exams', () => const ExamsScreen()),
-      (Icons.date_range_outlined, 'calendar', () => const CalendarScreen()),
-      (Icons.notifications_none, 'notifications', () => const NotificationsScreen()),
-      (Icons.settings_outlined, 'settings', () => const SettingsScreen()),
-    ];
-    final c = context.c;
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 12),
-          child: Text(context.t('nav.more'), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-        ),
-        PanelList(
-          children: [
-            for (final (icon, key, build) in items)
-              ListTile(
-                onTap: () => _push(context, build()),
-                leading: Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(color: c.accentSoft, borderRadius: BorderRadius.circular(10)),
-                  child: Icon(icon, size: 20, color: c.accentInk),
-                ),
-                title: Text(context.t('nav.$key'), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
-                trailing: Icon(Icons.chevron_right, color: c.muted),
-              ),
-          ],
-        ),
-      ],
-    );
-  }
 }
 
 // ---------------------------------------------------------------- Points
@@ -854,20 +813,23 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   static Future<Json> _loadAll(ParentApi api, List<Child> children) async {
     Object? firstError;
     var failed = 0;
-    final lists = await Future.wait(children.map((c) async {
-      try {
-        final r = await api.notifications(c.id);
-        return [for (final n in _list(r['items'])) {...n, _childKey: c.id}];
-      } catch (e) {
-        // One child's inbox failing should not hide the others.
-        firstError ??= e;
-        failed++;
-        return <Json>[];
-      }
-    }));
+    final lists = await Future.wait(
+      children.map((c) async {
+        try {
+          final r = await api.notifications(c.id);
+          return [
+            for (final n in _list(r['items'])) {...n, _childKey: c.id},
+          ];
+        } catch (e) {
+          // One child's inbox failing should not hide the others.
+          firstError ??= e;
+          failed++;
+          return <Json>[];
+        }
+      }),
+    );
     if (failed > 0 && failed == children.length) throw firstError!;
-    final items = lists.expand((l) => l).toList()
-      ..sort((a, b) => _time(b).compareTo(_time(a)));
+    final items = lists.expand((l) => l).toList()..sort((a, b) => _time(b).compareTo(_time(a)));
     return {'items': items};
   }
 
@@ -879,11 +841,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   static bool _same(Json a, Json b) => a['id'] == b['id'] && a[_childKey] == b[_childKey];
 
   /// Changes the cached list at once, then tells the server.
-  Future<void> _change(
-    bool Function(Json n) which,
-    Future<void> Function() send,
-    VoidCallback reload,
-  ) async {
+  Future<void> _change(bool Function(Json n) which, Future<void> Function() send, VoidCallback reload) async {
     final cache = context.read<QueryCache>();
     final data = cache.peek<Json>(NotificationsScreen.cacheKey);
     if (data == null) return;
@@ -974,11 +932,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                                           byId[_childOf(n)]!.fullName,
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w600,
-                                            color: c.accent,
-                                          ),
+                                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c.accent),
                                         ),
                                       ),
                                     ],
@@ -1021,11 +975,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     for (final n in items)
                       if (n['is_read'] != true) _childOf(n),
                   };
-                  _change(
-                    (_) => true,
-                    () => Future.wait(ids.map(api.markAllRead)),
-                    q.reload,
-                  );
+                  _change((_) => true, () => Future.wait(ids.map(api.markAllRead)), q.reload);
                 },
                 icon: const Icon(Icons.done_all, size: 18),
                 label: Text(context.t('notifications.readAll')),
@@ -1045,7 +995,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 // ---------------------------------------------------------------- Settings
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  const SettingsScreen({super.key, this.inTab = false});
+
+  /// Shown as a bottom-bar tab: no app bar of its own, a heading instead.
+  final bool inTab;
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
@@ -1074,72 +1027,130 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final c = context.c;
     final dark = Theme.of(context).brightness == Brightness.dark;
 
-    return _Page(
-      title: context.t('nav.settings'),
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-        children: [
-          SectionTitle(context.t('settings.children')),
-          PanelList(
-            children: [
-              for (final ch in children)
-                ListTile(
-                  leading: Avatar(name: ch.fullName, url: ch.picture, size: 36),
-                  title: Text(
-                    ch.fullName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
-                  ),
-                  subtitle: Text(
-                    [ch.code, ch.className].where((s) => s.isNotEmpty).join(' · '),
-                    style: TextStyle(fontSize: 12, color: c.muted),
-                  ),
-                ),
-            ],
-          ),
+    final list = ListView(
+      padding: EdgeInsets.fromLTRB(16, widget.inTab ? 8 : 16, 16, 32),
+      children: [
+        if (widget.inTab)
           Padding(
-            padding: const EdgeInsets.only(top: 8, bottom: 20),
-            child: Text(context.t('settings.childrenHint'), style: TextStyle(fontSize: 12, color: c.muted)),
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(context.t('nav.settings'), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
           ),
-          SectionTitle(context.t('settings.language')),
-          _Choice<String>(
-            value: settings.language,
-            onChange: settings.setLanguage,
-            options: [for (final l in kLanguages) (l.code, l.label)],
-          ),
-          const SizedBox(height: 20),
-          SectionTitle(context.t('settings.theme')),
-          _Choice<ThemeMode>(
-            value: settings.themeMode,
-            onChange: settings.setThemeMode,
-            options: [
-              (ThemeMode.system, context.t('settings.themes.system')),
-              (ThemeMode.light, context.t('settings.themes.light')),
-              (ThemeMode.dark, context.t('settings.themes.dark')),
-            ],
-          ),
-          const SizedBox(height: 24),
-          OutlinedButton.icon(
-            onPressed: () => _push(context, const PasskeysScreen()),
-            icon: const Icon(Icons.key_outlined, size: 18),
-            label: Text(context.t('passkey.title')),
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            style: OutlinedButton.styleFrom(foregroundColor: dark ? const Color(0xFFFB7185) : const Color(0xFFE11D48)),
-            onPressed: _logout,
-            icon: const Icon(Icons.logout, size: 18),
-            label: Text(context.t('auth.logOut')),
-          ),
-          const SizedBox(height: 24),
-          Text(
-            context.t('settings.version', {'version': kAppVersion}),
-            textAlign: TextAlign.center,
+        SectionTitle(context.t('settings.children')),
+        PanelList(
+          children: [
+            for (final ch in children)
+              ListTile(
+                leading: Avatar(name: ch.fullName, url: ch.picture, size: 36),
+                title: Text(
+                  ch.fullName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+                ),
+                subtitle: Text(
+                  [ch.code, ch.className].where((s) => s.isNotEmpty).join(' · '),
+                  style: TextStyle(fontSize: 12, color: c.muted),
+                ),
+              ),
+          ],
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 8, bottom: 20),
+          child: Text(context.t('settings.childrenHint'), style: TextStyle(fontSize: 12, color: c.muted)),
+        ),
+        SectionTitle(context.t('settings.language')),
+        _Choice<String>(
+          value: settings.language,
+          onChange: settings.setLanguage,
+          options: [for (final l in kLanguages) (l.code, l.label)],
+        ),
+        const SizedBox(height: 20),
+        SectionTitle(context.t('settings.theme')),
+        _Choice<ThemeMode>(
+          value: settings.themeMode,
+          onChange: settings.setThemeMode,
+          options: [
+            (ThemeMode.system, context.t('settings.themes.system')),
+            (ThemeMode.light, context.t('settings.themes.light')),
+            (ThemeMode.dark, context.t('settings.themes.dark')),
+          ],
+        ),
+        const SizedBox(height: 20),
+        const _NotificationChoices(),
+        const SizedBox(height: 24),
+        OutlinedButton.icon(
+          onPressed: () => _push(context, const PasskeysScreen()),
+          icon: const Icon(Icons.key_outlined, size: 18),
+          label: Text(context.t('passkey.title')),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(foregroundColor: dark ? const Color(0xFFFB7185) : const Color(0xFFE11D48)),
+          onPressed: _logout,
+          icon: const Icon(Icons.logout, size: 18),
+          label: Text(context.t('auth.logOut')),
+        ),
+        const SizedBox(height: 24),
+        Text(
+          context.t('settings.version', {'version': kAppVersion}),
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 12, color: c.muted),
+        ),
+      ],
+    );
+    if (widget.inTab) return list;
+    return _Page(title: context.t('nav.settings'), child: list);
+  }
+}
+
+/// One switch per kind of push. The bell inside the app keeps everything;
+/// these only decide what reaches the phone.
+class _NotificationChoices extends StatelessWidget {
+  const _NotificationChoices();
+
+  static const _icons = {
+    'attendance': Icons.event_busy_outlined,
+    'attendance_present': Icons.event_available_outlined,
+    'behavior': Icons.sentiment_satisfied_alt_outlined,
+    'point': Icons.emoji_events_outlined,
+    'grade': Icons.star_outline,
+    'exam': Icons.school_outlined,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final push = context.watch<Push>();
+    final c = context.c;
+    // A build without Firebase has no push to choose about.
+    if (!push.available) return const SizedBox.shrink();
+    final notes = [
+      if (!push.granted) context.t('settings.notifyOff'),
+      if (push.serverSupportsMuting == false) context.t('settings.notifyServerOld'),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SectionTitle(context.t('settings.notifications')),
+        PanelList(
+          children: [
+            for (final kind in Push.kinds)
+              SwitchListTile.adaptive(
+                value: push.isOn(kind),
+                onChanged: (on) => push.setOn(kind, on),
+                secondary: Icon(_icons[kind], size: 20, color: c.muted),
+                title: Text(context.t('notify.$kind'), style: const TextStyle(fontSize: 15)),
+                dense: true,
+              ),
+          ],
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(
+            [context.t('settings.notifyHint'), ...notes].join('\n'),
             style: TextStyle(fontSize: 12, color: c.muted),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -1209,9 +1220,9 @@ class _PasskeysScreenState extends State<PasskeysScreen> {
   bool _messageIsError = false;
 
   void _say(String key, {bool error = false}) => setState(() {
-        _messageKey = key;
-        _messageIsError = error;
-      });
+    _messageKey = key;
+    _messageIsError = error;
+  });
 
   Future<void> _add(Future<void> Function() reload) async {
     final auth = context.read<Auth>();
@@ -1266,9 +1277,12 @@ class _PasskeysScreenState extends State<PasskeysScreen> {
       load: api.passkeys,
       builder: (context, q) {
         final keys = _list(q.data?['result']);
+        final serverOff = q.data == null && passkeysOffOnServer(q.error);
         Widget list;
         if (q.loading) {
           list = const LoadingState();
+        } else if (q.data == null && serverOff) {
+          list = EmptyState(text: context.t('passkey.serverOff'), icon: Icons.key_off_outlined);
         } else if (q.data == null) {
           list = ErrorState(error: q.error, onRetry: q.reload);
         } else if (keys.isEmpty) {
@@ -1306,13 +1320,14 @@ class _PasskeysScreenState extends State<PasskeysScreen> {
                 const SizedBox(height: 16),
                 list,
                 const SizedBox(height: 16),
-                FilledButton.icon(
-                  onPressed: _busy ? null : () => _add(q.reload),
-                  icon: _busy
-                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.add),
-                  label: Text(context.t('passkey.add')),
-                ),
+                if (!serverOff)
+                  FilledButton.icon(
+                    onPressed: _busy ? null : () => _add(q.reload),
+                    icon: _busy
+                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.add),
+                    label: Text(context.t('passkey.add')),
+                  ),
                 if (_messageKey != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 10),

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "893320747343",
+    "project_id": "oneorg-578eb",
+    "storage_bucket": "oneorg-578eb.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:893320747343:android:c5a7b8a98d67eeae90cd3a",
+        "android_client_info": {
+          "package_name": "uz.oneorg.parents"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAKWS-fVrTav8kVriT8FKIxf127B4HqnLg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

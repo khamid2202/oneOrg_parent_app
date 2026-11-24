@@ -21,7 +21,12 @@ Future<void> main() async {
   final storage = await Storage.open();
   final api = ParentApi(ApiClient(storage));
   final cache = QueryCache();
-  final push = Push(api);
+  final settings = Settings(storage);
+  final push = Push(api, storage)..language = () => settings.language;
+  settings.addListener(() {
+    // Only a language change matters to push; re-registering is cheap.
+    if (push.lastLanguage != settings.language) push.languageChanged();
+  });
   final auth = Auth(api, storage, cache)
     // Unregister while the session can still authorize the request.
     ..beforeLogout = push.disable;
@@ -31,7 +36,7 @@ Future<void> main() async {
       Provider.value(value: storage),
       Provider.value(value: api),
       Provider.value(value: cache),
-      ChangeNotifierProvider(create: (_) => Settings(storage)),
+      ChangeNotifierProvider.value(value: settings),
       ChangeNotifierProvider.value(value: auth),
       ChangeNotifierProvider.value(value: push),
       ChangeNotifierProvider(create: (_) => Children(api, storage)),
