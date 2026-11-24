@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../api/parent_api.dart';
+import '../api/storage.dart';
 
 /// Push notifications: Firebase setup, the permission prompt, keeping this
 /// device's token registered for each child, and reacting to pushes.
@@ -20,9 +21,28 @@ import '../api/parent_api.dart';
 /// them itself when the app is closed or in the background. Only Android in
 /// the foreground needs drawing by hand, see [_onForeground].
 class Push extends ChangeNotifier {
-  Push(this._api);
+  Push(this._api, this._storage)
+      : muted = {...?_storage.getString(Storage.pushMuted)?.split(',').where(kinds.contains)};
 
   final ParentApi _api;
+  final Storage _storage;
+
+  /// Kinds of push a parent can switch off, in the order Settings lists
+  /// them. Keep in step with PARENT_PUSH_KINDS on the server.
+  static const kinds = ['attendance', 'attendance_present', 'behavior', 'point', 'grade', 'exam'];
+
+  /// The kinds switched off on this phone. Everything is on by default.
+  final Set<String> muted;
+
+  /// Whether the server stores [muted]: null until a registration answers.
+  /// An older server ignores the list and pushes everything.
+  bool? serverSupportsMuting;
+
+  /// The app's language, so pushes come in it. Set from main.
+  String Function()? language;
+
+  /// The language the server last heard for this phone.
+  String? lastLanguage;
   final _local = FlutterLocalNotificationsPlugin();
 
   /// Keep in step with `default_notification_channel_id` in
@@ -120,6 +140,13 @@ class Push extends ChangeNotifier {
           settings.authorizationStatus == AuthorizationStatus.provisional;
       notifyListeners();
       if (!granted) return;
+      // On iOS the FCM token needs the APNs token, which arrives a moment
+      // after permission is granted; asking sooner throws apns-token-not-set.
+      if (Platform.isIOS) {
+        for (var i = 0; i < 20 && await FirebaseMessaging.instance.getAPNSToken() == null; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 500));
+        }
+      }
       final token = await FirebaseMessaging.instance.getToken();
       if (token != null && token.isNotEmpty) await _register(token);
     } catch (e) {
@@ -133,9 +160,37 @@ class Push extends ChangeNotifier {
   Future<void> _register(String token) async {
     if (_childIds.isEmpty) return;
     _token = token;
-    await Future.wait(_childIds.map((id) => _api
-        .registerDeviceToken(id, token, _platform)
-        .catchError((Object e) => debugPrint('Token for child $id not registered: $e'))));
+    lastLanguage = language?.call();
+    final results = await Future.wait(_childIds.map((id) => _api
+        .registerDeviceToken(id, token, _platform, language: language?.call(), mutedTypes: muted.toList())
+        .then<Map<String, dynamic>?>((r) => r)
+        .catchError((Object e) {
+          debugPrint('Token for child $id not registered: $e');
+          return null;
+        })));
+    final answer = results.whereType<Map<String, dynamic>>().firstOrNull;
+    if (answer != null) {
+      serverSupportsMuting = answer.containsKey('muted_types');
+      notifyListeners();
+    }
+  }
+
+  bool isOn(String kind) => !muted.contains(kind);
+
+  /// Switches one kind of push on or off for this phone. Saved on the device
+  /// right away, and on the server with the phone's registration.
+  Future<void> setOn(String kind, bool on) async {
+    if (on ? !muted.remove(kind) : !muted.add(kind)) return;
+    await _storage.setString(Storage.pushMuted, muted.isEmpty ? null : muted.join(','));
+    notifyListeners();
+    final token = _token;
+    if (token != null) await _register(token);
+  }
+
+  /// The app's language changed: pushes follow it.
+  Future<void> languageChanged() async {
+    final token = _token;
+    if (token != null) await _register(token);
   }
 
   /// Stops pushes to this device. Called before logging out, while the

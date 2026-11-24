@@ -12,7 +12,21 @@ import '../widgets/theme.dart';
 
 typedef Json = Map<String, dynamic>;
 
-const _periods = [7, 30, 90];
+enum _Period { thisWeek, lastWeek, days30 }
+
+/// The dates each period asks the server for. Weeks start on Monday.
+Map<String, String> _rangeOf(_Period p) {
+  final now = DateTime.now();
+  final monday = mondayOf(now);
+  return switch (p) {
+    _Period.thisWeek => {'start_date': iso(monday), 'end_date': today()},
+    _Period.lastWeek => {
+        'start_date': iso(monday.subtract(const Duration(days: 7))),
+        'end_date': iso(monday.subtract(const Duration(days: 1))),
+      },
+    _Period.days30 => {'start_date': daysAgo(30), 'end_date': today()},
+  };
+}
 
 /// The five parts of a daily score (20 + 10 + 30 + 20 + 20 = 100). Coming on
 /// time adds nothing; coming late takes points off (`attendance_score` ≤ 0).
@@ -31,29 +45,35 @@ int _maxOf(Json row, String key) => _isV1(row) ? 20 : _categoryMax[key]!;
 String _labelOf(Json row, String key) =>
     _isV1(row) && key == 'homework' ? 'grades.category.homeworkOld' : 'grades.category.$key';
 
+/// The Baholar tab, or (with [subjectId]) a pushed page showing only that
+/// subject's grades, opened from a lesson in the timetable.
 class GradesScreen extends StatefulWidget {
-  const GradesScreen({super.key});
+  const GradesScreen({super.key, this.subjectId, this.subjectName});
+  final Object? subjectId;
+  final String? subjectName;
   @override
   State<GradesScreen> createState() => _GradesScreenState();
 }
 
 class _GradesScreenState extends State<GradesScreen> {
-  int _period = 30;
+  _Period _period = _Period.thisWeek;
   Object? _subjectId;
   int? _childId;
 
   @override
   Widget build(BuildContext context) {
     final child = context.watch<Children>().child!;
+    final locked = widget.subjectId != null;
     if (_childId != child.id) {
       _childId = child.id;
-      _subjectId = null;
+      _subjectId = widget.subjectId;
+      _period = _Period.thisWeek;
     }
     final api = context.read<ParentApi>();
-    final range = {'start_date': daysAgo(_period), 'end_date': today()};
+    final range = _rangeOf(_period);
 
-    return Query<Json>(
-      cacheKey: 'grades:${child.id}:$_period:all',
+    final page = Query<Json>(
+      cacheKey: 'grades:${child.id}:${range['start_date']}:${range['end_date']}:all',
       load: () => api.grades(child.id, {...range, 'limit': 200}),
       builder: (context, allQ) {
         // Every subject of the period, for the filter chips.
@@ -67,27 +87,23 @@ class _GradesScreenState extends State<GradesScreen> {
         return ListView(
           padding: const EdgeInsets.only(top: 8, bottom: 24),
           children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(context.t('nav.grades'),
-                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-                  ),
-                  for (final days in _periods) ...[
-                    const SizedBox(width: 6),
-                    Pill(
-                      label: context.t('grades.days', {'count': days}),
-                      selected: _period == days,
-                      onTap: () => setState(() => _period = days),
-                    ),
-                  ],
-                ],
+            if (!locked)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                child: Text(context.t('nav.grades'),
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
               ),
-            ),
+            // On their own line: the week labels are too long to share it with the title.
+            PillRow(children: [
+              for (final p in _Period.values)
+                Pill(
+                  label: context.t('grades.period.${p.name}'),
+                  selected: _period == p,
+                  onTap: () => setState(() => _period = p),
+                ),
+            ]),
             const SizedBox(height: 12),
-            if (subjects.length > 1) ...[
+            if (!locked && subjects.length > 1) ...[
               PillRow(children: [
                 Pill(
                   label: context.t('grades.allSubjects'),
@@ -104,7 +120,7 @@ class _GradesScreenState extends State<GradesScreen> {
               child: _subjectId == null
                   ? _body(allQ)
                   : Query<Json>(
-                      cacheKey: 'grades:${child.id}:$_period:$_subjectId',
+                      cacheKey: 'grades:${child.id}:${range['start_date']}:${range['end_date']}:$_subjectId',
                       load: () => api.grades(child.id, {...range, 'subject_id': _subjectId, 'limit': 200}),
                       builder: (context, q) => _body(q),
                     ),
@@ -112,6 +128,18 @@ class _GradesScreenState extends State<GradesScreen> {
           ],
         );
       },
+    );
+    if (!locked) return page;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.subjectName ?? context.t('nav.grades'),
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Divider(height: 1, thickness: 1, color: context.c.line),
+        ),
+      ),
+      body: page,
     );
   }
 
@@ -126,8 +154,48 @@ class _GradesScreenState extends State<GradesScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if ((asNum(summary?['lessons']) ?? 0) > 0) ...[_Summary(summary: summary!), const SizedBox(height: 16)],
-        PanelList(children: [for (final r in rows) _GradeRow(key: ValueKey(r['lesson_instance_id']), row: r)]),
+        for (final (i, day) in _byDay(rows).indexed) ...[
+          if (i > 0) const SizedBox(height: 16),
+          _DayHeader(day: day.key, rows: day.value),
+          PanelList(children: [for (final r in day.value) _GradeRow(key: ValueKey(r['lesson_instance_id']), row: r)]),
+        ],
       ],
+    );
+  }
+
+  /// Lessons grouped by day, newest day first, keeping the server's order inside a day.
+  static List<MapEntry<String, List<Json>>> _byDay(List<Json> rows) {
+    final days = <String, List<Json>>{};
+    for (final r in rows) {
+      days.putIfAbsent(dayOf(r['date']), () => []).add(r);
+    }
+    return days.entries.toList()..sort((a, b) => b.key.compareTo(a.key));
+  }
+}
+
+/// "Juma, 20 noyabr" with that day's average score on the right.
+class _DayHeader extends StatelessWidget {
+  const _DayHeader({required this.day, required this.rows});
+  final String day;
+  final List<Json> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    final scores = [for (final r in rows) asNum(r['score'])].whereType<num>().toList();
+    final avg = scores.isEmpty ? null : scores.reduce((a, b) => a + b) / scores.length;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(day.isEmpty ? '—' : Fmt(context.lang).dayLong(day),
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: context.c.muted)),
+          ),
+          if (avg != null)
+            Text(fmtNum(avg.round()),
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: scoreColor(context, avg))),
+        ],
+      ),
     );
   }
 }
@@ -256,7 +324,6 @@ class _GradeRowState extends State<_GradeRow> {
                         runSpacing: 4,
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
-                          if (row['date'] != null) Text(f.day(row['date'] as Object), style: TextStyle(fontSize: 12, color: c.muted)),
                           if (status != null && status != 'present')
                             AttendanceBadge(status: status, minutesLate: row['minutes_late']),
                           if (!_isV1(row) && (asNum(row['attendance_score']) ?? 0) < 0)

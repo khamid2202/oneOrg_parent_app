@@ -27,9 +27,18 @@ class Auth extends ChangeNotifier {
 
   Future<void> loginWithSms(String phone, String code) async {
     final body = await _api.loginWithSms(phone, code);
-    await _storage.setBool(
-        Storage.offerPasskey, !_storage.getBool(Storage.passkeyOfferDone));
+    await _storage.setBool(Storage.offerPasskey, false);
     await _accept(body);
+    // Offer a passkey only where the server can take one. Without the offer
+    // marked done, it comes back once the server supports passkeys.
+    if (_storage.getBool(Storage.passkeyOfferDone)) return;
+    try {
+      await _api.passkeys();
+    } catch (_) {
+      return;
+    }
+    await _storage.setBool(Storage.offerPasskey, true);
+    notifyListeners();
   }
 
   /// Throws [PasskeyCancelled] if the parent closes the system sheet.

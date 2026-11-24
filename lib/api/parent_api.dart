@@ -36,8 +36,6 @@ class ParentApi {
 
   Future<Map<String, dynamic>> schedule(int personId, String date) =>
       client.get('/parent/schedule', {'person_id': personId, 'date': date});
-  Future<Map<String, dynamic>> todayLessons(int personId) =>
-      client.get('/parent/schedule/today-lessons', {'person_id': personId});
 
   Future<Map<String, dynamic>> attendance(int personId, Map<String, Object?> params) =>
       client.get('/parent/attendance', {'person_id': personId, ...params});
@@ -69,11 +67,25 @@ class ParentApi {
   Future<void> markAllRead(int personId) => client
       .post('/parent/notifications/read-all', query: {'person_id': personId});
 
-  /// Pushes for [personId] go to this device. `person_id` goes in the query:
-  /// the body DTO only allows `token` and `platform`.
-  Future<void> registerDeviceToken(int personId, String token, String platform) => client.post(
+  /// Pushes for [personId] go to this device, in [language], except the
+  /// [mutedTypes] (the phone's whole list). `person_id` goes in the query.
+  /// The server's row comes back; it has `muted_types` once the server
+  /// knows about muting.
+  Future<Map<String, dynamic>> registerDeviceToken(
+    int personId,
+    String token,
+    String platform, {
+    String? language,
+    List<String>? mutedTypes,
+  }) =>
+      client.post(
         '/parent/notifications/device-token',
-        body: {'token': token, 'platform': platform},
+        body: {
+          'token': token,
+          'platform': platform,
+          'language': ?language,
+          'muted_types': ?mutedTypes,
+        },
         query: {'person_id': personId},
       );
 
