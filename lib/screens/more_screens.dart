@@ -20,7 +20,7 @@ import 'shell.dart';
 typedef Json = Map<String, dynamic>;
 
 /// Shown in Settings; keep in step with `version:` in pubspec.yaml.
-const kAppVersion = '1.0.0';
+const kAppVersion = '1.1.0';
 
 List<Json> _list(Object? v) => (v as List? ?? const []).cast<Json>();
 
