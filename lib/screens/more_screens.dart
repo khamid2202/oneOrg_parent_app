@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../api/api_client.dart';
@@ -11,6 +12,7 @@ import '../state/push.dart';
 import '../state/query_cache.dart';
 import '../state/settings.dart';
 import '../util/dates.dart';
+import '../util/notices.dart';
 import '../widgets/common.dart';
 import '../widgets/query.dart';
 import '../widgets/states.dart';
@@ -818,7 +820,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         try {
           final r = await api.notifications(c.id);
           return [
-            for (final n in _list(r['items'])) {...n, _childKey: c.id},
+            for (final n in _list(r['items']))
+              // Staffing changes are not for parents; older servers still sent them.
+              if (n['type'] != 'substitution') {...n, _childKey: c.id},
           ];
         } catch (e) {
           // One child's inbox failing should not hide the others.
@@ -864,13 +868,44 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
+  /// Filter chosen at the top; null shows everything.
+  NoticeKind? _filter;
+
+  /// Marks [n] read (if it isn't) and opens the page it is about.
+  void _open(Json n, Notice notice, ParentApi api, VoidCallback reload) {
+    if (n['is_read'] != true) {
+      _change((x) => _same(x, n), () => api.markRead(_childOf(n), (n['id'] as num).toInt()), reload);
+    }
+    final children = context.read<Children>();
+    void forChild() {
+      if (children.list.any((ch) => ch.id == _childOf(n))) children.select(_childOf(n));
+    }
+
+    switch (notice.kind) {
+      case NoticeKind.point:
+        forChild();
+        Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const PointsScreen()));
+      case NoticeKind.exam:
+        forChild();
+        Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ExamsScreen()));
+      case NoticeKind.grade:
+        forChild();
+        Shell.tabRequest.value = 2;
+      case NoticeKind.attendance:
+        forChild();
+        Shell.tabRequest.value = 3;
+      case NoticeKind.behavior:
+      case NoticeKind.other:
+        break;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final children = context.watch<Children>().list;
     final byId = {for (final ch in children) ch.id: ch};
     final api = context.read<ParentApi>();
     final f = Fmt(context.lang);
-    final c = context.c;
 
     return Query<Json>(
       cacheKey: NotificationsScreen.cacheKey,
@@ -878,93 +913,54 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       builder: (context, q) {
         final items = _list(q.data?['items']);
         final hasUnread = items.any((n) => n['is_read'] != true);
-        Widget body;
+        final notices = {for (final n in items) n: Notice.parse(n)};
+        final kinds = [
+          for (final k in NoticeKind.values)
+            if (notices.values.any((x) => x.kind == k)) k,
+        ];
+        final filter = kinds.contains(_filter) ? _filter : null;
+        final shown = [
+          for (final n in items)
+            if (filter == null || notices[n]!.kind == filter) n,
+        ];
+
+        final list = <Widget>[];
         if (q.loading) {
-          body = const LoadingState();
+          list.add(const LoadingState());
         } else if (q.data == null) {
-          body = ErrorState(error: q.error, onRetry: q.reload);
+          list.add(ErrorState(error: q.error, onRetry: q.reload));
         } else if (items.isEmpty) {
-          body = EmptyState(text: context.t('notifications.empty'), icon: Icons.notifications_off_outlined);
+          list.add(EmptyState(text: context.t('notifications.empty'), icon: Icons.notifications_off_outlined));
         } else {
-          body = PanelList(
-            children: [
-              for (final n in items)
-                InkWell(
-                  onTap: n['is_read'] == true
-                      ? null
-                      : () => _change(
-                          (x) => _same(x, n),
-                          () => api.markRead(_childOf(n), (n['id'] as num).toInt()),
-                          q.reload,
-                        ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          width: 8,
-                          height: 8,
-                          margin: const EdgeInsets.only(top: 6, right: 12),
-                          decoration: BoxDecoration(
-                            color: n['is_read'] == true ? Colors.transparent : c.accent,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // Which child it is about, once there is more than one.
-                              if (children.length > 1 && byId[_childOf(n)] != null)
-                                Padding(
-                                  padding: const EdgeInsets.only(bottom: 4),
-                                  child: Row(
-                                    children: [
-                                      Avatar(
-                                        name: byId[_childOf(n)]!.fullName,
-                                        url: byId[_childOf(n)]!.picture,
-                                        size: 18,
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Flexible(
-                                        child: Text(
-                                          byId[_childOf(n)]!.fullName,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c.accent),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              Text(
-                                '${n['title'] ?? ''}',
-                                style: TextStyle(fontWeight: n['is_read'] == true ? FontWeight.w400 : FontWeight.w600),
-                              ),
-                              if (n['body'] != null && '${n['body']}'.isNotEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 2),
-                                  child: Text('${n['body']}', style: TextStyle(fontSize: 14, color: c.muted)),
-                                ),
-                              if (n['created_at'] != null)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 4),
-                                  child: Text(
-                                    f.moment(n['created_at'] as Object),
-                                    style: TextStyle(fontSize: 12, color: c.muted),
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+          String? day;
+          var i = 0;
+          for (final n in shown) {
+            final when = _time(n).toLocal();
+            final key = iso(when);
+            if (key != day) {
+              day = key;
+              list.add(_DayHeader(label: _dayLabel(context, f, when)));
+            }
+            final child = byId[_childOf(n)];
+            list.add(_Appear(
+              index: i++,
+              child: _NoticeCard(
+                key: ValueKey('${n[_childKey]}:${n['id']}'),
+                notice: notices[n]!,
+                unread: n['is_read'] != true,
+                time: when,
+                child: children.length > 1 ? child : null,
+                onTap: () => _open(n, notices[n]!, api, q.reload),
+                onRead: () => _change(
+                  (x) => _same(x, n),
+                  () => api.markRead(_childOf(n), (n['id'] as num).toInt()),
+                  q.reload,
                 ),
-            ],
-          );
+              ),
+            ));
+          }
         }
+
         return _Page(
           title: context.t('nav.notifications'),
           actions: [
@@ -984,10 +980,358 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           ],
           child: RefreshIndicator(
             onRefresh: q.reload,
-            child: ListView(padding: const EdgeInsets.fromLTRB(16, 16, 16, 24), children: [body]),
+            child: ListView(
+              padding: const EdgeInsets.only(bottom: 24),
+              children: [
+                if (kinds.length > 1)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: PillRow(children: [
+                      Pill(
+                        label: '${context.t('notifications.all')} · ${items.length}',
+                        selected: filter == null,
+                        onTap: () => setState(() => _filter = null),
+                      ),
+                      for (final k in kinds)
+                        Pill(
+                          leading: Icon(_kindLook(context, k, null).icon, size: 16, color: _kindLook(context, k, null).color),
+                          label: '${context.t('notifications.kind.${k.name}')} · ${notices.values.where((x) => x.kind == k).length}',
+                          selected: filter == k,
+                          onTap: () => setState(() => _filter = filter == k ? null : k),
+                        ),
+                    ]),
+                  ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: list),
+                ),
+              ],
+            ),
           ),
         );
       },
+    );
+  }
+
+  static String _dayLabel(BuildContext context, Fmt f, DateTime d) {
+    final today = DateTime.now();
+    final key = iso(d);
+    if (key == iso(today)) return context.t('common.today');
+    if (key == iso(today.subtract(const Duration(days: 1)))) return context.t('common.yesterday');
+    return f.dayLong(d);
+  }
+}
+
+/// Icon and colour for a kind of notice; [notice] refines it (a behaviour
+/// note is red, an absence takes its attendance colour).
+({IconData icon, Color color}) _kindLook(BuildContext context, NoticeKind kind, Notice? notice) {
+  final dark = Theme.of(context).brightness == Brightness.dark;
+  Color tone(int light, int darkTone) => Color(dark ? darkTone : light);
+  return switch (kind) {
+    NoticeKind.grade => (icon: Icons.school_rounded, color: tone(0xFF7C3AED, 0xFFA78BFA)),
+    NoticeKind.exam => (icon: Icons.assignment_turned_in_rounded, color: tone(0xFF2563EB, 0xFF60A5FA)),
+    NoticeKind.attendance => (
+        icon: switch (notice?.status) {
+          'present' => Icons.how_to_reg_rounded,
+          'late' => Icons.schedule_rounded,
+          'absent' => Icons.person_off_rounded,
+          'excused' => Icons.medical_information_rounded,
+          _ => Icons.event_available_rounded,
+        },
+        color: notice?.status == null ? tone(0xFF0D9488, 0xFF2DD4BF) : attendanceColors(context, notice!.status!).solid,
+      ),
+    NoticeKind.behavior => switch (notice?.positive) {
+        false => (icon: Icons.flag_rounded, color: tone(0xFFE11D48, 0xFFFB7185)),
+        true => (icon: Icons.emoji_events_rounded, color: tone(0xFF059669, 0xFF34D399)),
+        null => (icon: Icons.psychology_rounded, color: tone(0xFFD97706, 0xFFFBBF24)),
+      },
+    NoticeKind.point => (
+        icon: (notice?.points ?? 1) < 0 ? Icons.trending_down_rounded : Icons.trending_up_rounded,
+        color: (notice?.points ?? 1) < 0 ? tone(0xFFE11D48, 0xFFFB7185) : tone(0xFFD97706, 0xFFFBBF24),
+      ),
+    NoticeKind.other => (icon: Icons.campaign_rounded, color: context.c.accent),
+  };
+}
+
+class _DayHeader extends StatelessWidget {
+  const _DayHeader({required this.label});
+  final String label;
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(4, 20, 4, 8),
+        child: Text(
+          label,
+          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: context.c.muted, letterSpacing: 0.2),
+        ),
+      );
+}
+
+/// Fades and lifts a card in, a beat after the one above it.
+class _Appear extends StatelessWidget {
+  const _Appear({required this.index, required this.child});
+  final int index;
+  final Widget child;
+  @override
+  Widget build(BuildContext context) {
+    final ms = 220 + 45 * (index < 10 ? index : 10);
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: Duration(milliseconds: ms),
+      curve: Curves.easeOutCubic,
+      builder: (context, t, child) => Opacity(
+        opacity: t,
+        child: Transform.translate(offset: Offset(0, 12 * (1 - t)), child: child),
+      ),
+      child: child,
+    );
+  }
+}
+
+class _NoticeCard extends StatelessWidget {
+  const _NoticeCard({
+    super.key,
+    required this.notice,
+    required this.unread,
+    required this.time,
+    required this.child,
+    required this.onTap,
+    required this.onRead,
+  });
+
+  final Notice notice;
+  final bool unread;
+  final DateTime time;
+
+  /// The child it is about, shown only when there is more than one.
+  final Child? child;
+  final VoidCallback onTap, onRead;
+
+  static String _capital(String s) => s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
+
+  static final _date = RegExp(r'^\d{1,2}[./]\d{1,2}[./]\d{2,4}$');
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.c;
+    final look = _kindLook(context, notice.kind, notice);
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final soft = look.color.withValues(alpha: dark ? 0.22 : 0.12);
+    final main = switch (notice.kind) {
+      NoticeKind.grade || NoticeKind.exam || NoticeKind.point => notice.subject ?? notice.headline,
+      NoticeKind.attendance => notice.status != null
+          ? context.t('attendance.status.${notice.status}')
+          : notice.headline,
+      _ => _capital(notice.headline),
+    };
+    final sub = switch (notice.kind) {
+      // The day heading above already says the date.
+      NoticeKind.grade || NoticeKind.exam => notice.details.where((d) => !_date.hasMatch(d)).join(' · '),
+      NoticeKind.point => notice.details.join(' · '),
+      _ => notice.details.join(' · '),
+    };
+
+    final card = Material(
+      color: unread ? Color.alphaBlend(look.color.withValues(alpha: dark ? 0.08 : 0.04), c.surface) : c.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: unread ? look.color.withValues(alpha: 0.35) : c.line),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+          child: Row(
+            children: [
+              // Kind icon, with the child's photo tucked in its corner.
+              SizedBox(
+                width: 48,
+                height: 48,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(color: soft, borderRadius: BorderRadius.circular(14)),
+                      child: Icon(look.icon, color: look.color, size: 24),
+                    ),
+                    if (child != null)
+                      Positioned(
+                        right: 0,
+                        bottom: 0,
+                        child: Container(
+                          padding: const EdgeInsets.all(1.5),
+                          decoration: BoxDecoration(color: c.surface, shape: BoxShape.circle),
+                          child: Avatar(name: child!.fullName, url: child!.picture, size: 20),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            [
+                              context.t('notifications.kind.${notice.kind.name}'),
+                              if (child != null) child!.fullName.split(' ').skip(1).firstOrNull ?? child!.fullName,
+                            ].join(' · '),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: look.color),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(DateFormat('HH:mm').format(time), style: TextStyle(fontSize: 12, color: c.muted)),
+                        if (unread) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(color: look.color, shape: BoxShape.circle),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      main,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: unread ? FontWeight.w700 : FontWeight.w600,
+                        color: c.ink,
+                      ),
+                    ),
+                    if (sub.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          sub,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 13, color: c.muted),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              if (_trailing(context) case final trailing?) ...[const SizedBox(width: 10), trailing],
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (!unread) return Padding(padding: const EdgeInsets.only(bottom: 10), child: card);
+    // Swipe left to mark read without opening it.
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Dismissible(
+        key: ValueKey('read:${key.hashCode}'),
+        direction: DismissDirection.endToStart,
+        confirmDismiss: (_) async {
+          onRead();
+          return false;
+        },
+        background: Container(
+          alignment: Alignment.centerRight,
+          padding: const EdgeInsets.only(right: 20),
+          decoration: BoxDecoration(color: c.accentSoft, borderRadius: BorderRadius.circular(16)),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(context.t('notifications.markRead'),
+                  style: TextStyle(color: c.accentInk, fontWeight: FontWeight.w600, fontSize: 13)),
+              const SizedBox(width: 6),
+              Icon(Icons.done_rounded, color: c.accentInk, size: 20),
+            ],
+          ),
+        ),
+        child: card,
+      ),
+    );
+  }
+
+  Widget? _trailing(BuildContext context) {
+    switch (notice.kind) {
+      case NoticeKind.grade:
+      case NoticeKind.exam:
+        final score = notice.score;
+        if (score == null) return null;
+        return _ScoreRing(score: score, max: notice.maxScore, percent: notice.percent);
+      case NoticeKind.point:
+        final p = notice.points;
+        if (p == null) return null;
+        final look = _kindLook(context, notice.kind, notice);
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: look.color.withValues(alpha: Theme.of(context).brightness == Brightness.dark ? 0.22 : 0.12),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            p > 0 ? '+$p' : '$p',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: look.color),
+          ),
+        );
+      case NoticeKind.attendance:
+      case NoticeKind.behavior:
+      case NoticeKind.other:
+        return null;
+    }
+  }
+}
+
+/// A score in a ring that fills to its share of the maximum, coloured like
+/// scores elsewhere in the app.
+class _ScoreRing extends StatelessWidget {
+  const _ScoreRing({required this.score, required this.max, required this.percent});
+  final num score;
+  final num? max, percent;
+
+  static String _n(num v) => v == v.roundToDouble() ? v.round().toString() : v.toStringAsFixed(1);
+
+  @override
+  Widget build(BuildContext context) {
+    final color = scoreColor(context, percent ?? (max == null ? null : score));
+    return SizedBox(
+      width: 52,
+      height: 52,
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0, end: ((percent ?? 0) / 100).clamp(0, 1).toDouble()),
+        duration: const Duration(milliseconds: 700),
+        curve: Curves.easeOutCubic,
+        builder: (context, t, _) => Stack(
+          alignment: Alignment.center,
+          children: [
+            SizedBox.expand(
+              child: CircularProgressIndicator(
+                value: percent == null ? 0 : t,
+                strokeWidth: 4,
+                strokeCap: StrokeCap.round,
+                backgroundColor: color.withValues(alpha: 0.15),
+                valueColor: AlwaysStoppedAnimation(color),
+              ),
+            ),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(_n(score), style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: color, height: 1.1)),
+                if (max != null)
+                  Text('/${_n(max!)}', style: TextStyle(fontSize: 10, color: context.c.muted, height: 1.1)),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

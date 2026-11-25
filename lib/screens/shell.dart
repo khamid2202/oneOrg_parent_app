@@ -61,6 +61,11 @@ class Unread extends ChangeNotifier {
 
 class Shell extends StatefulWidget {
   const Shell({super.key});
+
+  /// Asks the open shell to show a tab (2 = grades, 3 = attendance), for pages
+  /// pushed over it, such as the inbox, that link to a tab.
+  static final tabRequest = ValueNotifier<int?>(null);
+
   @override
   State<Shell> createState() => _ShellState();
 }
@@ -75,6 +80,7 @@ class _ShellState extends State<Shell> {
     super.initState();
     final children = context.read<Children>();
     _push.onMessage = _onPush;
+    Shell.tabRequest.addListener(_onTabRequest);
     children.load().then((_) {
       if (!mounted) return;
       context.read<Unread>().start(children.list);
@@ -87,10 +93,19 @@ class _ShellState extends State<Shell> {
 
   @override
   void dispose() {
+    Shell.tabRequest.removeListener(_onTabRequest);
     _push
       ..onOpen = null
       ..onMessage = null;
     super.dispose();
+  }
+
+  void _onTabRequest() {
+    final tab = Shell.tabRequest.value;
+    if (tab == null || !mounted) return;
+    Shell.tabRequest.value = null;
+    Navigator.of(context).popUntil((r) => r.isFirst);
+    _goTo(tab);
   }
 
   /// A push was tapped: switch to that child and show their notifications.
